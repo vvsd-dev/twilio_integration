@@ -1,0 +1,36 @@
+[
+ {
+  "default_value": null,
+  "doc_type": "Notification",
+  "docstatus": 0,
+  "doctype": "Property Setter",
+  "doctype_or_field": "DocField",
+  "field_name": "channel",
+  "modified": "2020-11-01 11:05:40.052493",
+  "name": "Notification-channel-options",
+  "parent": null,
+  "parentfield": null,
+  "parenttype": null,
+  "property": "options",
+  "property_type": "Text",
+  "row_name": null,
+  "value": "Email\nSlack\nSystem Notification\nSMS\nWhatsApp"
+ },
+ {
+  "default_value": null,
+  "doc_type": "Notification",
+  "docstatus": 0,
+  "doctype": "Property Setter",
+  "doctype_or_field": "DocField",
+  "field_name": "column_break_5",
+  "modified": "2020-10-25 11:06:45.707981",
+  "name": "Notification-column_break_5-depends_on",
+  "parent": null,
+  "parentfield": null,
+  "parenttype": null,
+  "property": "depends_on",
+  "property_type": "Data",
+  "row_name": null,
+  "value": "eval:in_list(['Email', 'SMS', 'WhatsApp'], doc.channel)"
+ }
+]
