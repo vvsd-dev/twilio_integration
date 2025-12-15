@@ -2,14 +2,14 @@
 name = "twilio_integration"
 description = "Custom Frappe Application for Twilio Integration"
 authors = [
-    { name = "Frappe", email = "developers@frappe.io" }
+    { name = "VVSD", email = "info@vvsdtz.com" }
 ]
 readme = "README.md"
 requires-python = ">=3.10"
 dynamic = ["version"]
 
 dependencies = [
-    "twilio==6.44.2",
+    "twilio>=8.0.0",
     "pyngrok~=5.1.0",
 ]
 

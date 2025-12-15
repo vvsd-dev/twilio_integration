@@ -4,11 +4,11 @@ from . import __version__ as app_version
 
 app_name = "twilio_integration"
 app_title = "Twilio Integration"
-app_publisher = "Frappe"
+app_publisher = "VVSD"
 app_description = "Custom Frappe Application for Twilio Integration"
 app_icon = "octicon octicon-file-directory"
 app_color = "grey"
-app_email = "developers@frappe.io"
+app_email = "info@vvsdtz.com"
 app_license = "MIT"
 fixtures = [{"dt": "Custom Field", "filters": [
 		[

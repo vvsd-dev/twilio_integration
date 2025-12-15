@@ -66,19 +66,30 @@ class SendNotification(Notification):
 			if notification.attach_print:
 				attachments = self.get_pdf_attachment(doc, notification.print_format, doctype)
 			
+			# Get WhatsApp template ID if available
+			template_id = notification.get("whatsapp_template_id")
+			
 			# Log what we're trying to send
 			frappe.log_error(
 				title="WhatsApp Send Attempt",
-				message=f"Doctype: {doctype}\nDocname: {docname}\nReceivers: {receiver_list}\nHas Attachment: {attachments is not None}\nPrint Format: {notification.print_format}"
+				message=f"Doctype: {doctype}\nDocname: {docname}\nReceivers: {receiver_list}\nHas Attachment: {attachments is not None}\nPrint Format: {notification.print_format}\nTemplate ID: {template_id}"
 			)
 			
-			WhatsAppMessage.send_whatsapp_message(
-				receiver_list=receiver_list,
-				message=message,
-				doctype=doctype,
-				docname=docname,
-				attachments=attachments
-			)
+			# Prepare parameters for WhatsApp message
+			whatsapp_params = {
+				"receiver_list": receiver_list,
+				"message": message,
+				"doctype": doctype,
+				"docname": docname,
+				"attachments": attachments
+			}
+			
+			# Add template_id if it exists
+			if template_id:
+				whatsapp_params["template_id"] = template_id
+			
+			WhatsAppMessage.send_whatsapp_message(**whatsapp_params)
+			
 		except Exception as e:
 			frappe.log_error(
 				title='Failed to send WhatsApp async',
