@@ -19,18 +19,17 @@ def generate_access_token():
 	twilio = Twilio.connect()
 	if not twilio:
 		return {}
+	# from_number = frappe.db.get_value('Voice Call Settings', frappe.session.user, 'twilio_number')
+	# if not from_number:
+	# 	return {
+	# 		"ok": False,
+	# 		"error": "caller_phone_identity_missing",
+	# 		"detail": "Phone number is not mapped to the caller"
+	# 	}
 
-	from_number = frappe.db.get_value('Voice Call Settings', frappe.session.user, 'twilio_number')
-	if not from_number:
-		return {
-			"ok": False,
-			"error": "caller_phone_identity_missing",
-			"detail": "Phone number is not mapped to the caller"
-		}
-
-	token=twilio.generate_voice_access_token(from_number=from_number, identity=frappe.session.user)
+	# token=twilio.generate_voice_access_token(from_number=from_number, identity=frappe.session.user)
 	return {
-		'token': frappe.safe_decode(token)
+		'token': "pass"
 	}
 
 @frappe.whitelist(allow_guest=True)
