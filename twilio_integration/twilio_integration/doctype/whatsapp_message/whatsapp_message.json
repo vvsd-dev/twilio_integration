@@ -16,7 +16,8 @@
   "reference_doctype",
   "reference_document_name",
   "profile_name",
-  "whatsapp_template_id"
+  "whatsapp_template_id",
+  "variables"
  ],
  "fields": [
   {
@@ -88,14 +89,20 @@
    "fieldname": "whatsapp_template_id",
    "fieldtype": "Data",
    "label": "WhatsApp Template ID"
+  },
+  {
+   "fieldname": "variables",
+   "fieldtype": "Table",
+   "label": "Variables",
+   "options": "Notification Variables"
   }
  ],
  "in_create": 1,
  "index_web_pages_for_search": 1,
  "links": [],
  "max_attachments": 1,
- "modified": "2025-11-07 11:20:51.687094",
- "modified_by": "ibrahim@vvsdtz.com",
+ "modified": "2026-05-04 18:00:07.430641",
+ "modified_by": "Administrator",
  "module": "Twilio Integration",
  "name": "WhatsApp Message",
  "owner": "Administrator",

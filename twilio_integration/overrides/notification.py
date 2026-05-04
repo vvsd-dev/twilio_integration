@@ -45,56 +45,124 @@ class SendNotification(Notification):
 	def send_whatsapp_msg_async(self, doctype, docname, notification_name):
 		"""Async method to send WhatsApp message"""
 		try:
-			# Reload both docs to get fresh data
 			notification = frappe.get_doc("Notification", notification_name)
 			doc = frappe.get_doc(doctype, docname)
-			
-			# Build context fresh (avoiding unpicklable objects)
-			context = {
-				"doc": doc,
-				"alert": notification,
-				"comments": None
-			}
+
+			context = {"doc": doc, "alert": notification, "comments": None}
 			if doc.get("_comments"):
 				context["comments"] = json.loads(doc.get("_comments"))
-			
+
 			message = frappe.render_template(notification.message, context)
 			receiver_list = notification.get_receiver_list(doc, context)
-			
-			# Handle PDF attachment if attach_print is enabled
+
+			# Handle PDF attachment
 			attachments = None
 			if notification.attach_print:
 				attachments = self.get_pdf_attachment(doc, notification.print_format, doctype)
-			
-			# Get WhatsApp template ID if available
+
+			# Build content_variables from child table if present
+			content_variables = None
+			if notification.get("variables"):
+				content_variables = {}
+				for row in notification.variables:
+					try:
+						rendered_value = frappe.render_template(row.variable_data, context)
+						content_variables[str(row.variable_name)] = rendered_value
+					except Exception as e:
+						frappe.log_error(
+							title=f"Failed to render variable '{row.variable_name}'",
+							message=f"{str(e)}\n{frappe.get_traceback()}"
+						)
+						content_variables[str(row.variable_name)] = ""
+
 			template_id = notification.get("whatsapp_template_id")
-			
-			# Log what we're trying to send
+
 			frappe.log_error(
 				title="WhatsApp Send Attempt",
-				message=f"Doctype: {doctype}\nDocname: {docname}\nReceivers: {receiver_list}\nHas Attachment: {attachments is not None}\nPrint Format: {notification.print_format}\nTemplate ID: {template_id}"
+				message=(
+					f"Doctype: {doctype}\nDocname: {docname}\n"
+					f"Receivers: {receiver_list}\n"
+					f"Template ID: {template_id}\n"
+					f"Content Variables: {json.dumps(content_variables, indent=2)}\n"
+					f"Has Attachment: {attachments is not None}"
+				)
 			)
-			
-			# Prepare parameters for WhatsApp message
+
 			whatsapp_params = {
 				"receiver_list": receiver_list,
 				"message": message,
 				"doctype": doctype,
 				"docname": docname,
-				"attachments": attachments
+				"attachments": attachments,
 			}
-			
-			# Add template_id if it exists
+
 			if template_id:
 				whatsapp_params["template_id"] = template_id
-			
+
+			# Only pass content_variables if the table has rows
+			if content_variables:
+				whatsapp_params["content_variables"] = json.dumps(content_variables)
+
 			WhatsAppMessage.send_whatsapp_message(**whatsapp_params)
-			
+
 		except Exception as e:
 			frappe.log_error(
 				title='Failed to send WhatsApp async',
 				message=f"{str(e)}\n{frappe.get_traceback()}"
 			)
+	# def send_whatsapp_msg_async(self, doctype, docname, notification_name):
+	# 	"""Async method to send WhatsApp message"""
+	# 	try:
+	# 		# Reload both docs to get fresh data
+	# 		notification = frappe.get_doc("Notification", notification_name)
+	# 		doc = frappe.get_doc(doctype, docname)
+			
+	# 		# Build context fresh (avoiding unpicklable objects)
+	# 		context = {
+	# 			"doc": doc,
+	# 			"alert": notification,
+	# 			"comments": None
+	# 		}
+	# 		if doc.get("_comments"):
+	# 			context["comments"] = json.loads(doc.get("_comments"))
+			
+	# 		message = frappe.render_template(notification.message, context)
+	# 		receiver_list = notification.get_receiver_list(doc, context)
+			
+	# 		# Handle PDF attachment if attach_print is enabled
+	# 		attachments = None
+	# 		if notification.attach_print:
+	# 			attachments = self.get_pdf_attachment(doc, notification.print_format, doctype)
+			
+	# 		# Get WhatsApp template ID if available
+	# 		template_id = notification.get("whatsapp_template_id")
+			
+	# 		# Log what we're trying to send
+	# 		frappe.log_error(
+	# 			title="WhatsApp Send Attempt",
+	# 			message=f"Doctype: {doctype}\nDocname: {docname}\nReceivers: {receiver_list}\nHas Attachment: {attachments is not None}\nPrint Format: {notification.print_format}\nTemplate ID: {template_id}"
+	# 		)
+			
+	# 		# Prepare parameters for WhatsApp message
+	# 		whatsapp_params = {
+	# 			"receiver_list": receiver_list,
+	# 			"message": message,
+	# 			"doctype": doctype,
+	# 			"docname": docname,
+	# 			"attachments": attachments
+	# 		}
+			
+	# 		# Add template_id if it exists
+	# 		if template_id:
+	# 			whatsapp_params["template_id"] = template_id
+			
+	# 		WhatsAppMessage.send_whatsapp_message(**whatsapp_params)
+			
+	# 	except Exception as e:
+	# 		frappe.log_error(
+	# 			title='Failed to send WhatsApp async',
+	# 			message=f"{str(e)}\n{frappe.get_traceback()}"
+	# 		)
 
 	def get_pdf_attachment(self, doc, print_format, doctype):
 		"""Generate PDF attachment from print format and merge with existing merged PDF if available"""

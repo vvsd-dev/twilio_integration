@@ -40,21 +40,17 @@ class WhatsAppMessage(Document):
 		
 		# Add WhatsApp template (Content SID) if available
 		if self.get('whatsapp_template_id'):
-			# Use ContentSid for Twilio Content Templates
 			args['content_sid'] = self.whatsapp_template_id
 			
-			# Optional: Add content variables if your template has variables
-			# args['content_variables'] = json.dumps({
-			#     "1": "variable_value_1",
-			#     "2": "variable_value_2"
-			# })
-			
+			# Add content_variables if present on the document
+			if self.get('content_variables'):
+				args['content_variables'] = self.content_variables  # already a JSON string
+				
 			frappe.log_error(
 				title="WhatsApp Template Used",
-				message=f"Using Content Template SID: {self.whatsapp_template_id}"
+				message=f"Using Content Template SID: {self.whatsapp_template_id}\nVariables: {self.get('content_variables')}"
 			)
 		else:
-			# Only add body if not using a template
 			args['body'] = self.message
 		
 		# Handle media_link - ensure it's a string
@@ -75,18 +71,15 @@ class WhatsAppMessage(Document):
 		return args
 
 	@classmethod
-	def send_whatsapp_message(cls, receiver_list, message, doctype, docname, attachments=None, template_id=None):
+	def send_whatsapp_message(cls, receiver_list, message, doctype, docname, attachments=None, template_id=None, content_variables=None):
 		if isinstance(receiver_list, string_types):
 			receiver_list = loads(receiver_list)
 			if not isinstance(receiver_list, list):
 				receiver_list = [receiver_list]
 
-		# Handle attachments - upload to accessible location if provided
 		media_url = None
 		if attachments:
 			media_url = cls.handle_attachment(attachments, doctype, docname)
-			
-			# If media URL is not accessible, add download link to message
 			if not media_url:
 				frappe.log_error(
 					title="WhatsApp Media Warning",
@@ -94,7 +87,7 @@ class WhatsAppMessage(Document):
 				)
 
 		for rec in receiver_list:
-			wa_message = cls.store_whatsapp_message(rec, message, doctype, docname, media_url, template_id)
+			wa_message = cls.store_whatsapp_message(rec, message, doctype, docname, media_url, template_id, content_variables)
 			wa_message.send()
 
 	@staticmethod
@@ -162,7 +155,7 @@ class WhatsAppMessage(Document):
 			return None
 
 	@staticmethod
-	def store_whatsapp_message(to, message, doctype=None, docname=None, media=None, template_id=None):
+	def store_whatsapp_message(to, message, doctype=None, docname=None, media=None, template_id=None, content_variables=None):
 		sender = frappe.db.get_single_value('Twilio Settings', 'whatsapp_no')
 		
 		doc_dict = {
@@ -175,12 +168,14 @@ class WhatsAppMessage(Document):
 			'media_link': media
 		}
 		
-		# Add template_id if provided
 		if template_id:
 			doc_dict['whatsapp_template_id'] = template_id
 		
-		wa_msg = frappe.get_doc(doc_dict).insert(ignore_permissions=True)
+		# Add content_variables if provided
+		if content_variables:
+			doc_dict['content_variables'] = content_variables  # JSON string
 
+		wa_msg = frappe.get_doc(doc_dict).insert(ignore_permissions=True)
 		return wa_msg
 
 def incoming_message_callback(args):
