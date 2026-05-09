@@ -43,12 +43,16 @@ class WhatsAppMessage(Document):
 			args['content_sid'] = self.whatsapp_template_id
 			
 			# Add content_variables if present on the document
-			if self.get('content_variables'):
-				args['content_variables'] = self.content_variables  # already a JSON string
+			if self.get('variables'):
+				import json
+				content_vars = {}
+				for row in self.variables:
+					content_vars[row.variable_name] = row.variable_data
+				args['content_variables'] = json.dumps(content_vars)
 				
 			frappe.log_error(
 				title="WhatsApp Template Used",
-				message=f"Using Content Template SID: {self.whatsapp_template_id}\nVariables: {self.get('content_variables')}"
+				message=f"Using Content Template SID: {self.whatsapp_template_id}\nVariables: {args.get('content_variables')}"
 			)
 		else:
 			args['body'] = self.message
@@ -173,7 +177,17 @@ class WhatsAppMessage(Document):
 		
 		# Add content_variables if provided
 		if content_variables:
-			doc_dict['content_variables'] = content_variables  # JSON string
+			try:
+				import json
+				parsed_vars = json.loads(content_variables)
+				doc_dict['variables'] = []
+				for k, v in parsed_vars.items():
+					doc_dict['variables'].append({
+						'variable_name': k,
+						'variable_data': v
+					})
+			except Exception as e:
+				frappe.log_error("Failed to parse content_variables", str(e))
 
 		wa_msg = frappe.get_doc(doc_dict).insert(ignore_permissions=True)
 		return wa_msg
