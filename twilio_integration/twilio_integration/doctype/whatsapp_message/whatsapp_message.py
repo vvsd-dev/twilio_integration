@@ -45,9 +45,16 @@ class WhatsAppMessage(Document):
 			# Add content_variables if present on the document
 			if self.get('variables'):
 				import json
+				import re
+				from frappe.utils import strip_html
 				content_vars = {}
 				for row in self.variables:
-					content_vars[row.variable_name] = row.variable_data
+					val = row.variable_data or ""
+					# Twilio Content API rejects variables with newlines, tabs, or HTML
+					# So we must strip HTML and replace newlines/tabs with spaces
+					val = strip_html(val)
+					val = re.sub(r'\s+', ' ', val).strip()
+					content_vars[str(row.variable_name)] = val
 				args['content_variables'] = json.dumps(content_vars)
 				
 			frappe.log_error(
