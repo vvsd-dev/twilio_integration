@@ -46,34 +46,19 @@ class WhatsAppMessage(Document):
 			if self.get('variables'):
 				import json
 				import re
+				try:
+					from html import unescape
+				except ImportError:
+					from html.parser import HTMLParser
+					unescape = HTMLParser().unescape
 				content_vars = {}
 				for row in self.variables:
 					val = row.variable_data or ""
-					# Convert HTML block elements to newlines BEFORE stripping tags
-					# so that paragraph/div/br boundaries become real line breaks
-					val = re.sub(r'<br\s*/?>', '\n', val, flags=re.IGNORECASE)
-					val = re.sub(r'</p>', '\n', val, flags=re.IGNORECASE)
-					val = re.sub(r'</div>', '\n', val, flags=re.IGNORECASE)
-					val = re.sub(r'</li>', '\n', val, flags=re.IGNORECASE)
-					# Strip all remaining HTML tags
-					val = re.sub(r'<[^>]+>', '', val)
-					# Collapse horizontal whitespace (spaces/tabs) on each line,
-					# but keep newlines intact so WhatsApp renders line breaks
-					lines = val.split('\n')
-					lines = [re.sub(r'[ \t]+', ' ', line).strip() for line in lines]
-					# Drop fully empty lines that appear in runs of 3+ to avoid
-					# excessive blank space, but keep single blank lines for spacing
-					cleaned_lines = []
-					consecutive_blanks = 0
-					for line in lines:
-						if line == '':
-							consecutive_blanks += 1
-							if consecutive_blanks <= 1:
-								cleaned_lines.append(line)
-						else:
-							consecutive_blanks = 0
-							cleaned_lines.append(line)
-					val = '\n'.join(cleaned_lines).strip()
+					# Twilio Content API rejects variables containing newlines or HTML.
+					# Strip all HTML tags first, then collapse ALL whitespace to spaces.
+					val = re.sub(r'<[^>]+>', ' ', val)  # replace tags with a space
+					val = unescape(val)                 # decode &amp; &nbsp; etc.
+					val = re.sub(r'\s+', ' ', val).strip()
 					content_vars[str(row.variable_name)] = val
 				args['content_variables'] = json.dumps(content_vars)
 				
