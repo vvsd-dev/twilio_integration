@@ -7,6 +7,7 @@ from PyPDF2 import PdfMerger
 import os
 import io
 
+
 class SendNotification(Notification):
 	def validate(self):
 		self.validate_twilio_settings()
@@ -27,26 +28,46 @@ class SendNotification(Notification):
 
 		try:
 			if self.channel == 'WhatsApp':
-				# Use enqueue to send WhatsApp message asynchronously
-				# Don't pass context - we'll rebuild it in the async method
+				# Serialize doc data NOW while the document is guaranteed to exist,
+				# so the async worker does not need to re-fetch it from the DB.
 				frappe.enqueue(
 					self.send_whatsapp_msg_async,
 					queue='default',
 					timeout=300,
 					doctype=self.document_type,
 					docname=doc.name,
-					notification_name=self.name
+					notification_name=self.name,
+					doc_data=doc.as_dict()  # safeguard 1: pass data at enqueue time
 				)
 		except:
 			frappe.log_error(title='Failed to send notification', message=frappe.get_traceback())
 
 		super(SendNotification, self).send(doc)
 
-	def send_whatsapp_msg_async(self, doctype, docname, notification_name):
+	def send_whatsapp_msg_async(self, doctype, docname, notification_name, doc_data=None):
 		"""Async method to send WhatsApp message"""
 		try:
 			notification = frappe.get_doc("Notification", notification_name)
-			doc = frappe.get_doc(doctype, docname)
+
+			# --- Safeguard 1: use serialized doc_data to avoid race-condition re-fetch ---
+			if doc_data:
+				doc = frappe.get_doc({"doctype": doctype, **doc_data})
+				doc.name = docname  # ensure name is preserved exactly
+			else:
+				# Graceful fallback: if the document was deleted between enqueue and
+				# execution (e.g. transaction rollback, quick delete), log and bail out
+				# rather than raising an unhandled DoesNotExistError.
+				if not frappe.db.exists(doctype, docname):
+					frappe.log_error(
+						title="WhatsApp Notification Skipped",
+						message=(
+							f"{doctype} '{docname}' no longer exists when the async job ran.\n"
+							f"Notification: {notification_name}\n"
+							"The document may have been deleted or the transaction rolled back."
+						)
+					)
+					return
+				doc = frappe.get_doc(doctype, docname)
 
 			context = {"doc": doc, "alert": notification, "comments": None}
 			if doc.get("_comments"):
@@ -110,59 +131,6 @@ class SendNotification(Notification):
 				title='Failed to send WhatsApp async',
 				message=f"{str(e)}\n{frappe.get_traceback()}"
 			)
-	# def send_whatsapp_msg_async(self, doctype, docname, notification_name):
-	# 	"""Async method to send WhatsApp message"""
-	# 	try:
-	# 		# Reload both docs to get fresh data
-	# 		notification = frappe.get_doc("Notification", notification_name)
-	# 		doc = frappe.get_doc(doctype, docname)
-			
-	# 		# Build context fresh (avoiding unpicklable objects)
-	# 		context = {
-	# 			"doc": doc,
-	# 			"alert": notification,
-	# 			"comments": None
-	# 		}
-	# 		if doc.get("_comments"):
-	# 			context["comments"] = json.loads(doc.get("_comments"))
-			
-	# 		message = frappe.render_template(notification.message, context)
-	# 		receiver_list = notification.get_receiver_list(doc, context)
-			
-	# 		# Handle PDF attachment if attach_print is enabled
-	# 		attachments = None
-	# 		if notification.attach_print:
-	# 			attachments = self.get_pdf_attachment(doc, notification.print_format, doctype)
-			
-	# 		# Get WhatsApp template ID if available
-	# 		template_id = notification.get("whatsapp_template_id")
-			
-	# 		# Log what we're trying to send
-	# 		frappe.log_error(
-	# 			title="WhatsApp Send Attempt",
-	# 			message=f"Doctype: {doctype}\nDocname: {docname}\nReceivers: {receiver_list}\nHas Attachment: {attachments is not None}\nPrint Format: {notification.print_format}\nTemplate ID: {template_id}"
-	# 		)
-			
-	# 		# Prepare parameters for WhatsApp message
-	# 		whatsapp_params = {
-	# 			"receiver_list": receiver_list,
-	# 			"message": message,
-	# 			"doctype": doctype,
-	# 			"docname": docname,
-	# 			"attachments": attachments
-	# 		}
-			
-	# 		# Add template_id if it exists
-	# 		if template_id:
-	# 			whatsapp_params["template_id"] = template_id
-			
-	# 		WhatsAppMessage.send_whatsapp_message(**whatsapp_params)
-			
-	# 	except Exception as e:
-	# 		frappe.log_error(
-	# 			title='Failed to send WhatsApp async',
-	# 			message=f"{str(e)}\n{frappe.get_traceback()}"
-	# 		)
 
 	def get_pdf_attachment(self, doc, print_format, doctype):
 		"""Generate PDF attachment from print format and merge with existing merged PDF if available"""
@@ -173,7 +141,7 @@ class SendNotification(Notification):
 					message=f"No print format specified for {doctype} {doc.name}"
 				)
 				return None
-			
+
 			# Generate PDF from print format - this returns bytes
 			pdf_content = frappe.get_print(
 				doctype=doctype,
@@ -182,7 +150,7 @@ class SendNotification(Notification):
 				as_pdf=True,
 				doc=doc
 			)
-			
+
 			# Check if PDF was generated
 			if not pdf_content:
 				frappe.log_error(
@@ -190,25 +158,25 @@ class SendNotification(Notification):
 					message=f"frappe.get_print returned None for {doctype} {doc.name} with format {print_format}"
 				)
 				return None
-			
+
 			frappe.log_error(
 				title="PDF Generated Successfully",
 				message=f"PDF size: {len(pdf_content)} bytes for {doc.name} using format '{print_format}'"
 			)
-			
+
 			# Check if merged PDF exists for this document
 			merged_pdf_path = self.get_merged_pdf_path(doc.name, doctype)
-			
+
 			if merged_pdf_path:
 				# Merge the print format PDF with the existing merged PDF
 				try:
 					final_pdf_content = self.merge_pdfs_with_print_format(pdf_content, merged_pdf_path, doc.name)
-					
+
 					frappe.log_error(
 						title="PDFs Merged Successfully",
 						message=f"Merged print format PDF with existing merged PDF for {doc.name}. Final size: {len(final_pdf_content)} bytes"
 					)
-					
+
 					# Return merged attachment
 					return [{
 						"fname": f"{doc.name}_complete.pdf",
@@ -221,13 +189,13 @@ class SendNotification(Notification):
 					)
 					# Fall back to just the print format PDF
 					pass
-			
+
 			# Return attachment with just the print format PDF
 			return [{
 				"fname": f"{doc.name}.pdf",
 				"fcontent": pdf_content
 			}]
-			
+
 		except Exception as e:
 			frappe.log_error(
 				title=f"Failed to generate PDF for {doctype} {doc.name}",
@@ -238,23 +206,37 @@ class SendNotification(Notification):
 	def get_merged_pdf_path(self, docname, doctype):
 		"""Check if a merged PDF exists for this document"""
 		try:
+			# --- Safeguard 2: bail out early if the parent document no longer exists ---
+			# This prevents misleading File queries when the doc was deleted between
+			# enqueue time and the moment get_pdf_attachment calls this method.
+			if not frappe.db.exists(doctype, docname):
+				frappe.log_error(
+					title="get_merged_pdf_path: Document Gone",
+					message=(
+						f"{doctype} '{docname}' no longer exists. "
+						"Skipping merged-PDF lookup to avoid stale File queries."
+					)
+				)
+				return None
+
 			# Look for merged PDF file attached to the document
 			merged_filename = f"{docname}_merged_attachments.pdf"
-			
+
 			# First, get all files attached to this document for debugging
-			all_files = frappe.get_all("File",
+			all_files = frappe.get_all(
+				"File",
 				filters={
 					"attached_to_doctype": doctype,
 					"attached_to_name": docname
 				},
 				fields=["name", "file_name", "file_url", "is_private"]
 			)
-			
+
 			frappe.log_error(
 				title="All Attached Files",
 				message=f"Document: {docname}\nFiles found: {len(all_files)}\nFiles: {json.dumps(all_files, indent=2)}"
 			)
-			
+
 			# Try to find merged PDF - check both exact match and partial match
 			file_doc = None
 			for f in all_files:
@@ -265,23 +247,23 @@ class SendNotification(Notification):
 						message=f"Using file: {json.dumps(file_doc, indent=2)}"
 					)
 					break
-			
+
 			if not file_doc:
 				frappe.log_error(
 					title="Merged PDF Not Found",
 					message=f"No merged PDF found for {docname}. Looking for filename containing 'merged'"
 				)
 				return None
-			
+
 			file_url = file_doc.get("file_url")
 			is_private = file_doc.get("is_private", 0)
-			
+
 			# Construct file path
 			site_path = frappe.get_site_path()
-			
+
 			if file_url.startswith('/'):
 				file_url = file_url[1:]
-			
+
 			if file_url.startswith('files/'):
 				file_path = os.path.join(site_path, 'public', file_url)
 			elif file_url.startswith('private/files/'):
@@ -292,8 +274,8 @@ class SendNotification(Notification):
 					file_path = os.path.join(site_path, 'private', 'files', filename)
 				else:
 					file_path = os.path.join(site_path, 'public', 'files', filename)
-			
-			# Check if file exists
+
+			# Check if file exists on disk
 			if os.path.exists(file_path):
 				frappe.log_error(
 					title="✓ Merged PDF Found",
@@ -306,7 +288,7 @@ class SendNotification(Notification):
 					message=f"Document: {docname}\nFile record exists but file not found at: {file_path}\nChecked paths:\n- {file_path}"
 				)
 				return None
-				
+
 		except Exception as e:
 			frappe.log_error(
 				title=f"Error checking for merged PDF",
@@ -316,36 +298,41 @@ class SendNotification(Notification):
 
 	def merge_pdfs_with_print_format(self, print_format_pdf_bytes, merged_pdf_path, docname):
 		"""
-		Merge print format PDF with existing merged PDF
-		Print format PDF will be first, followed by merged PDF
+		Merge print format PDF with existing merged PDF.
+		Print format PDF will be first, followed by merged PDF.
 		"""
 		try:
 			merger = PdfMerger()
-			
+
 			# Add print format PDF first (from bytes)
 			print_format_pdf_file = io.BytesIO(print_format_pdf_bytes)
 			merger.append(print_format_pdf_file)
-			
+
 			# Add existing merged PDF second (from file path)
 			merger.append(merged_pdf_path)
-			
+
 			# Write to bytes buffer
 			output_buffer = io.BytesIO()
 			merger.write(output_buffer)
 			merger.close()
-			
+
 			# Get the bytes
 			final_pdf_bytes = output_buffer.getvalue()
 			output_buffer.close()
 			print_format_pdf_file.close()
-			
+
 			frappe.log_error(
 				title="PDF Merge Details",
-				message=f"Document: {docname}\nPrint format PDF size: {len(print_format_pdf_bytes)} bytes\nMerged PDF path: {merged_pdf_path}\nFinal size: {len(final_pdf_bytes)} bytes"
+				message=(
+					f"Document: {docname}\n"
+					f"Print format PDF size: {len(print_format_pdf_bytes)} bytes\n"
+					f"Merged PDF path: {merged_pdf_path}\n"
+					f"Final size: {len(final_pdf_bytes)} bytes"
+				)
 			)
-			
+
 			return final_pdf_bytes
-			
+
 		except Exception as e:
 			frappe.log_error(
 				title=f"PDF Merge Failed for {docname}",
@@ -356,37 +343,37 @@ class SendNotification(Notification):
 	@staticmethod
 	def merge_pdfs_with_pikepdf(print_format_pdf_bytes, merged_pdf_path, docname):
 		"""
-		Alternative merge method using pikepdf (more robust)
-		Uncomment and use if you prefer pikepdf over PyPDF2
+		Alternative merge method using pikepdf (more robust).
+		Uncomment and use if you prefer pikepdf over PyPDF2.
 		"""
 		try:
 			import pikepdf
-			
+
 			# Open print format PDF from bytes
 			print_format_pdf = pikepdf.Pdf.open(io.BytesIO(print_format_pdf_bytes))
-			
+
 			# Open existing merged PDF from file
 			merged_pdf = pikepdf.Pdf.open(merged_pdf_path)
-			
+
 			# Create new PDF with print format pages first
 			final_pdf = pikepdf.Pdf.new()
 			final_pdf.pages.extend(print_format_pdf.pages)
 			final_pdf.pages.extend(merged_pdf.pages)
-			
+
 			# Write to bytes buffer
 			output_buffer = io.BytesIO()
 			final_pdf.save(output_buffer)
-			
+
 			# Get the bytes
 			final_pdf_bytes = output_buffer.getvalue()
-			
+
 			# Clean up
 			output_buffer.close()
 			print_format_pdf.close()
 			merged_pdf.close()
-			
+
 			return final_pdf_bytes
-			
+
 		except Exception as e:
 			frappe.log_error(
 				title=f"PDF Merge Failed (pikepdf) for {docname}",
