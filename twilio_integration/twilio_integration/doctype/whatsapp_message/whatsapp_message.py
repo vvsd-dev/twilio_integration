@@ -87,23 +87,85 @@ class WhatsAppMessage(Document):
 		return args
 
 	@classmethod
-	def send_whatsapp_message(cls, receiver_list, message, doctype, docname, attachments=None, template_id=None, content_variables=None):
+	def save_attachment_early(cls, attachments, doctype, docname):
+		"""
+		Save the PDF file immediately and return (full_url, actual_filename).
+		This is called BEFORE variable rendering so the real filename is known.
+		"""
+		try:
+			if not attachments:
+				return None, None
+
+			attachment = attachments[0]
+			fname = attachment.get('fname')
+			fcontent = attachment.get('fcontent')
+
+			if not fcontent:
+				return None, None
+
+			from frappe.utils.file_manager import save_file
+
+			file_doc = save_file(
+				fname=fname,
+				content=fcontent,
+				dt=doctype,
+				dn=docname,
+				is_private=0,
+				decode=False
+			)
+
+			# file_url is e.g. /files/EPT-00093326aeb.pdf — this is the REAL name
+			actual_filename = file_doc.file_url.split('/')[-1]  # EPT-00093326aeb.pdf
+			site_url = get_url()
+			full_url = f"{site_url}{file_doc.file_url}"
+
+			frappe.log_error(
+				title="PDF Saved Early",
+				message=f"Real filename: {actual_filename}\nFull URL: {full_url}"
+			)
+
+			# Store the file name on the attachment dict so handle_attachment
+			# can detect it's already saved
+			attachment['_saved_file_url'] = full_url
+			attachment['_saved_filename'] = actual_filename
+
+			return full_url, actual_filename
+
+		except Exception as e:
+			frappe.log_error(
+				title='save_attachment_early Error',
+				message=f"{str(e)}\n{frappe.get_traceback()}"
+			)
+			return None, None
+
+
+	@classmethod
+	def send_whatsapp_message(cls, receiver_list, message, doctype, docname,
+							attachments=None, template_id=None,
+							content_variables=None, saved_file_url=None):  # ← new param
 		if isinstance(receiver_list, string_types):
 			receiver_list = loads(receiver_list)
 			if not isinstance(receiver_list, list):
 				receiver_list = [receiver_list]
 
 		media_url = None
-		if attachments:
+
+		if saved_file_url:
+			# Already saved — use the known URL directly, skip re-saving
+			media_url = saved_file_url
+		elif attachments:
 			media_url = cls.handle_attachment(attachments, doctype, docname)
 			if not media_url:
 				frappe.log_error(
 					title="WhatsApp Media Warning",
-					message="Media URL not generated. PDF will not be attached to WhatsApp message."
+					message="Media URL not generated."
 				)
 
 		for rec in receiver_list:
-			wa_message = cls.store_whatsapp_message(rec, message, doctype, docname, media_url, template_id, content_variables)
+			wa_message = cls.store_whatsapp_message(
+				rec, message, doctype, docname,
+				media_url, template_id, content_variables
+			)
 			wa_message.send()
 
 	@staticmethod

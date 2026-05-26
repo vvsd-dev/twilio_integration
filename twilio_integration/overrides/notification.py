@@ -45,27 +45,16 @@ class SendNotification(Notification):
 		super(SendNotification, self).send(doc)
 
 	def send_whatsapp_msg_async(self, doctype, docname, notification_name, doc_data=None):
-		"""Async method to send WhatsApp message"""
 		try:
 			notification = frappe.get_doc("Notification", notification_name)
 
-			# --- Safeguard 1: use serialized doc_data to avoid race-condition re-fetch ---
 			if doc_data:
 				doc = frappe.get_doc({"doctype": doctype, **doc_data})
-				doc.name = docname  # ensure name is preserved exactly
+				doc.name = docname
 			else:
-				# Graceful fallback: if the document was deleted between enqueue and
-				# execution (e.g. transaction rollback, quick delete), log and bail out
-				# rather than raising an unhandled DoesNotExistError.
 				if not frappe.db.exists(doctype, docname):
-					frappe.log_error(
-						title="WhatsApp Notification Skipped",
-						message=(
-							f"{doctype} '{docname}' no longer exists when the async job ran.\n"
-							f"Notification: {notification_name}\n"
-							"The document may have been deleted or the transaction rolled back."
-						)
-					)
+					frappe.log_error(title="WhatsApp Notification Skipped",
+						message=f"{doctype} '{docname}' no longer exists.\nNotification: {notification_name}")
 					return
 				doc = frappe.get_doc(doctype, docname)
 
@@ -76,12 +65,26 @@ class SendNotification(Notification):
 			message = frappe.render_template(notification.message, context)
 			receiver_list = notification.get_receiver_list(doc, context)
 
-			# Handle PDF attachment
+			# ── Generate & save PDF FIRST so we know the real filename ───────────
 			attachments = None
-			if notification.attach_print:
-				attachments = self.get_pdf_attachment(doc, notification.print_format, doctype)
+			saved_file_url = None
+			saved_filename = None
 
-			# Build content_variables from child table if present
+			if notification.attach_print:
+				pdf_result = self.get_pdf_attachment(doc, notification.print_format, doctype)
+				if pdf_result:
+					# Save immediately to get the real filename (Frappe may add suffix)
+					saved_file_url, saved_filename = WhatsAppMessage.save_attachment_early(
+						pdf_result, doctype, doc.name
+					)
+					attachments = pdf_result  # still pass for backward compat
+
+			# Inject real filename/url into context BEFORE variables are rendered
+			context["pdf_file_url"] = saved_file_url or ""
+			context["pdf_filename"] = saved_filename or f"{doc.name}.pdf"
+			# ─────────────────────────────────────────────────────────────────────
+
+			# Build content_variables
 			content_variables = None
 			if notification.get("variables"):
 				content_variables = {}
@@ -98,29 +101,18 @@ class SendNotification(Notification):
 
 			template_id = notification.get("whatsapp_template_id")
 
-			frappe.log_error(
-				title="WhatsApp Send Attempt",
-				message=(
-					f"Doctype: {doctype}\nDocname: {docname}\n"
-					f"Receivers: {receiver_list}\n"
-					f"Template ID: {template_id}\n"
-					f"Content Variables: {json.dumps(content_variables, indent=2)}\n"
-					f"Has Attachment: {attachments is not None}"
-				)
-			)
-
 			whatsapp_params = {
 				"receiver_list": receiver_list,
 				"message": message,
 				"doctype": doctype,
-				"docname": docname,
+				"docname": doc.name,
+				# Pass the already-known URL directly so handle_attachment
+				# doesn't re-save and generate a new suffix
+				"saved_file_url": saved_file_url,
 				"attachments": attachments,
 			}
-
 			if template_id:
 				whatsapp_params["template_id"] = template_id
-
-			# Only pass content_variables if the table has rows
 			if content_variables:
 				whatsapp_params["content_variables"] = json.dumps(content_variables)
 
